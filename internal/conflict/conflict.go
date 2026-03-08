@@ -1,10 +1,11 @@
-// Package conflict provides conflict detection for bidirectional sync.
+// Package conflict provides conflict detection and management for bidirectional sync.
 package conflict
 
 import (
 	"time"
 
-	"github.com/Aronwwo/sneakernet-sync/internal/archive"
+	"github.com/Aronwwo/sneakernet-sync/internal/reconcile"
+	"github.com/Aronwwo/sneakernet-sync/internal/store/sqlite"
 )
 
 // ConflictInfo describes a detected conflict for a single file.
@@ -12,37 +13,63 @@ type ConflictInfo struct {
 	RelPath      string
 	LocalHash    string
 	RemoteHash   string
+	BaseHash     string
 	LocalDevice  string
 	RemoteDevice string
 	DetectedAt   time.Time
+	Kind         string // "content", "delete_modify", "create_create"
+	Reason       string
 }
 
-// Detect compares local, remote, and archive snapshots and returns a list of
-// conflicts. A conflict occurs when both local and remote have changed a file
-// relative to the archive snapshot and their new hashes differ.
-func Detect(localState, remoteState, archiveState archive.Snapshot) []ConflictInfo {
+// FromPlan extracts conflicts from a reconciliation plan and enriches them
+// with device information.
+func FromPlan(plan *reconcile.Plan, localDevice, remoteDevice string) []ConflictInfo {
 	var conflicts []ConflictInfo
+	now := time.Now().UTC()
 
-	for path, localHash := range localState.Files {
-		remoteHash, inRemote := remoteState.Files[path]
-		archiveHash, inArchive := archiveState.Files[path]
-
-		if !inRemote {
-			continue
-		}
-
-		localChanged := !inArchive || localHash != archiveHash
-		remoteChanged := !inArchive || remoteHash != archiveHash
-
-		if localChanged && remoteChanged && localHash != remoteHash {
-			conflicts = append(conflicts, ConflictInfo{
-				RelPath:    path,
-				LocalHash:  localHash,
-				RemoteHash: remoteHash,
-				DetectedAt: time.Now(),
-			})
-		}
+	for _, e := range plan.Conflicts() {
+		kind := classifyConflict(e)
+		conflicts = append(conflicts, ConflictInfo{
+			RelPath:      e.RelPath,
+			LocalHash:    e.LocalHash,
+			RemoteHash:   e.RemoteHash,
+			BaseHash:     e.BaseHash,
+			LocalDevice:  localDevice,
+			RemoteDevice: remoteDevice,
+			DetectedAt:   now,
+			Kind:         kind,
+			Reason:       e.Reason,
+		})
 	}
 
 	return conflicts
+}
+
+// SaveConflicts persists conflict records to the store.
+func SaveConflicts(store *sqlite.Store, conflicts []ConflictInfo) error {
+	for _, c := range conflicts {
+		err := store.SaveConflict(sqlite.Conflict{
+			RelPath:      c.RelPath,
+			LocalHash:    c.LocalHash,
+			RemoteHash:   c.RemoteHash,
+			LocalDevice:  c.LocalDevice,
+			RemoteDevice: c.RemoteDevice,
+			DetectedAt:   c.DetectedAt,
+			Kind:         c.Kind,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func classifyConflict(e reconcile.Entry) string {
+	if e.LocalHash == "" || e.RemoteHash == "" {
+		return "delete_modify"
+	}
+	if e.BaseHash == "" {
+		return "create_create"
+	}
+	return "content"
 }

@@ -29,7 +29,7 @@ func TestScan_BasicFiles(t *testing.T) {
 	changes, err := s.Scan()
 	require.NoError(t, err)
 
-	// Only non-hidden files should be returned.
+	// Only non-hidden files and directories should be returned.
 	paths := make(map[string]bool)
 	for _, c := range changes {
 		paths[filepath.ToSlash(c.RelPath)] = true
@@ -37,9 +37,10 @@ func TestScan_BasicFiles(t *testing.T) {
 
 	require.True(t, paths["a.txt"], "expected a.txt")
 	require.True(t, paths["sub/b.txt"], "expected sub/b.txt")
+	require.True(t, paths["sub"], "expected sub directory")
 	require.False(t, paths[".hidden"], "hidden file should be skipped")
 	require.False(t, paths[".hiddendir/c"], "hidden dir contents should be skipped")
-	require.Equal(t, 2, len(changes))
+	require.Equal(t, 3, len(changes)) // a.txt, sub/, sub/b.txt
 }
 
 func TestScan_EmptyDirectory(t *testing.T) {
