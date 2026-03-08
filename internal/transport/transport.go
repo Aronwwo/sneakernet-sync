@@ -11,6 +11,7 @@
 package transport
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -159,8 +160,10 @@ func Export(mediaRoot string, snap *archive.Snapshot, deviceName string, localBl
 		return nil, fmt.Errorf("write manifest: %w", err)
 	}
 
-	// Remove lock file.
-	os.Remove(lockPath)
+	// Remove lock file on success.
+	if err := os.Remove(lockPath); err != nil {
+		return manifest, fmt.Errorf("remove lock file: %w", err)
+	}
 
 	return manifest, nil
 }
@@ -330,23 +333,5 @@ func CopyBlob(mediaRoot string, contentHash string, localBlobs *blobstore.BlobSt
 		return fmt.Errorf("read media blob: %w", err)
 	}
 
-	return localBlobs.StoreReader(contentHash, bytesReader(data))
-}
-
-type bytesReaderWrapper struct {
-	data []byte
-	pos  int
-}
-
-func (r *bytesReaderWrapper) Read(p []byte) (n int, err error) {
-	if r.pos >= len(r.data) {
-		return 0, io.EOF
-	}
-	n = copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
-}
-
-func bytesReader(data []byte) io.Reader {
-	return &bytesReaderWrapper{data: data}
+	return localBlobs.StoreReader(contentHash, bytes.NewReader(data))
 }
