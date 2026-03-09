@@ -8,8 +8,8 @@ import (
 	"github.com/Aronwwo/sneakernet-sync/internal/store/sqlite"
 )
 
-// ConflictInfo describes a detected conflict for a single file.
-type ConflictInfo struct {
+// Info describes a detected conflict for a single file.
+type Info struct {
 	RelPath      string
 	LocalHash    string
 	RemoteHash   string
@@ -23,13 +23,13 @@ type ConflictInfo struct {
 
 // FromPlan extracts conflicts from a reconciliation plan and enriches them
 // with device information.
-func FromPlan(plan *reconcile.Plan, localDevice, remoteDevice string) []ConflictInfo {
-	var conflicts []ConflictInfo
+func FromPlan(plan *reconcile.Plan, localDevice, remoteDevice string) []Info {
+	var conflicts []Info
 	now := time.Now().UTC()
 
 	for _, e := range plan.Conflicts() {
 		kind := classifyConflict(e)
-		conflicts = append(conflicts, ConflictInfo{
+		conflicts = append(conflicts, Info{
 			RelPath:      e.RelPath,
 			LocalHash:    e.LocalHash,
 			RemoteHash:   e.RemoteHash,
@@ -46,7 +46,7 @@ func FromPlan(plan *reconcile.Plan, localDevice, remoteDevice string) []Conflict
 }
 
 // SaveConflicts persists conflict records to the store.
-func SaveConflicts(store *sqlite.Store, conflicts []ConflictInfo) error {
+func SaveConflicts(store *sqlite.Store, conflicts []Info) error {
 	for _, c := range conflicts {
 		err := store.SaveConflict(sqlite.Conflict{
 			RelPath:      c.RelPath,

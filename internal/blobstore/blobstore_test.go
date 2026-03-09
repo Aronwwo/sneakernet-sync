@@ -55,12 +55,13 @@ func TestBlobStore_Deduplication(t *testing.T) {
 
 	// Only one blob should exist (deduplication).
 	blobCount := 0
-	filepath.Walk(filepath.Join(tmp, "blobs"), func(_ string, info os.FileInfo, _ error) error {
+	err := filepath.Walk(filepath.Join(tmp, "blobs"), func(_ string, info os.FileInfo, _ error) error {
 		if info != nil && !info.IsDir() {
 			blobCount++
 		}
 		return nil
 	})
+	require.NoError(t, err)
 	require.Equal(t, 1, blobCount)
 }
 

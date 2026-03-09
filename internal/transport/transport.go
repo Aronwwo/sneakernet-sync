@@ -68,6 +68,42 @@ type ImportResult struct {
 	BlobsFound int
 }
 
+// exportBlobs copies file blobs from the local store to the media blob store.
+func exportBlobs(snap *archive.Snapshot, localBlobs *blobstore.BlobStore, mediaBlobStore *blobstore.BlobStore) error {
+	for _, state := range snap.Files {
+		if state.IsDir || state.ContentHash == "" || state.ContentHash == archive.DirHash {
+			continue
+		}
+		if mediaBlobStore.Has(state.ContentHash) {
+			continue
+		}
+		srcPath := localBlobs.Path(state.ContentHash)
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			continue
+		}
+		if _, err := mediaBlobStore.Store(srcPath); err != nil {
+			return fmt.Errorf("export blob %q: %w", state.ContentHash, err)
+		}
+	}
+	return nil
+}
+
+// snapshotToFiles converts a snapshot's file map into a serialisable slice.
+func snapshotToFiles(snap *archive.Snapshot) []SnapshotFile {
+	var files []SnapshotFile
+	for relPath, state := range snap.Files {
+		files = append(files, SnapshotFile{
+			RelPath:     relPath,
+			ContentHash: state.ContentHash,
+			Size:        state.Size,
+			ModTime:     state.ModTime,
+			IsDir:       state.IsDir,
+			Exists:      state.Exists,
+		})
+	}
+	return files
+}
+
 // Export writes the current snapshot and blobs to external media.
 func Export(mediaRoot string, snap *archive.Snapshot, deviceName string, localBlobs *blobstore.BlobStore, opts ExportOptions) (*Manifest, error) {
 	offsyncDir := filepath.Join(mediaRoot, MediaDir)
@@ -100,37 +136,12 @@ func Export(mediaRoot string, snap *archive.Snapshot, deviceName string, localBl
 	}
 
 	// Export blobs.
-	mediaBlobStore := blobstore.New(blobsDir)
-	for _, state := range snap.Files {
-		if state.IsDir || state.ContentHash == "" || state.ContentHash == "DIR" {
-			continue
-		}
-		if mediaBlobStore.Has(state.ContentHash) {
-			continue
-		}
-		srcPath := localBlobs.Path(state.ContentHash)
-		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-			continue
-		}
-		if _, err := mediaBlobStore.Store(srcPath); err != nil {
-			return nil, fmt.Errorf("export blob %q: %w", state.ContentHash, err)
-		}
+	if err := exportBlobs(snap, localBlobs, blobstore.New(blobsDir)); err != nil {
+		return nil, err
 	}
 
 	// Export snapshot.
-	var files []SnapshotFile
-	for relPath, state := range snap.Files {
-		files = append(files, SnapshotFile{
-			RelPath:     relPath,
-			ContentHash: state.ContentHash,
-			Size:        state.Size,
-			ModTime:     state.ModTime,
-			IsDir:       state.IsDir,
-			Exists:      state.Exists,
-		})
-	}
-
-	snapData, err := json.MarshalIndent(files, "", "  ")
+	snapData, err := json.MarshalIndent(snapshotToFiles(snap), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal snapshot: %w", err)
 	}
@@ -168,6 +179,57 @@ func Export(mediaRoot string, snap *archive.Snapshot, deviceName string, localBl
 	return manifest, nil
 }
 
+// readManifest reads and validates the manifest from external media.
+func readManifest(offsyncDir string) (Manifest, error) {
+	manifestPath := filepath.Join(offsyncDir, ManifestFile)
+	manifestData, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("read manifest: %w", err)
+	}
+
+	var manifest Manifest
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		return Manifest{}, fmt.Errorf("parse manifest: %w", err)
+	}
+
+	if manifest.SchemaVersion > SchemaVersion {
+		return Manifest{}, fmt.Errorf("unsupported schema version %d (max supported: %d)", manifest.SchemaVersion, SchemaVersion)
+	}
+
+	return manifest, nil
+}
+
+// importBlobs copies blobs from the media store into the local blob store,
+// returning the number of blobs found (either already local or newly imported).
+func importBlobs(snap *archive.Snapshot, localBlobs *blobstore.BlobStore, mediaBlobStore *blobstore.BlobStore) (int, error) {
+	blobsFound := 0
+	for _, state := range snap.Files {
+		if state.IsDir || state.ContentHash == "" || state.ContentHash == archive.DirHash {
+			continue
+		}
+		if localBlobs.Has(state.ContentHash) {
+			blobsFound++
+			continue
+		}
+		srcPath := mediaBlobStore.Path(state.ContentHash)
+		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+			continue
+		}
+
+		src, err := os.Open(srcPath)
+		if err != nil {
+			return 0, fmt.Errorf("open media blob %q: %w", state.ContentHash, err)
+		}
+		err = localBlobs.StoreReader(state.ContentHash, src)
+		src.Close()
+		if err != nil {
+			return 0, fmt.Errorf("import blob %q: %w", state.ContentHash, err)
+		}
+		blobsFound++
+	}
+	return blobsFound, nil
+}
+
 // Import reads sync data from external media.
 func Import(mediaRoot string, localBlobs *blobstore.BlobStore) (*ImportResult, error) {
 	offsyncDir := filepath.Join(mediaRoot, MediaDir)
@@ -178,20 +240,9 @@ func Import(mediaRoot string, localBlobs *blobstore.BlobStore) (*ImportResult, e
 		return nil, fmt.Errorf("media has a lock file — export may be incomplete; remove %s to force", lockPath)
 	}
 
-	// Read manifest.
-	manifestPath := filepath.Join(offsyncDir, ManifestFile)
-	manifestData, err := os.ReadFile(manifestPath)
+	manifest, err := readManifest(offsyncDir)
 	if err != nil {
-		return nil, fmt.Errorf("read manifest: %w", err)
-	}
-
-	var manifest Manifest
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
-		return nil, fmt.Errorf("parse manifest: %w", err)
-	}
-
-	if manifest.SchemaVersion > SchemaVersion {
-		return nil, fmt.Errorf("unsupported schema version %d (max supported: %d)", manifest.SchemaVersion, SchemaVersion)
+		return nil, err
 	}
 
 	// Read snapshot.
@@ -224,32 +275,9 @@ func Import(mediaRoot string, localBlobs *blobstore.BlobStore) (*ImportResult, e
 
 	// Import blobs.
 	blobsDir := filepath.Join(offsyncDir, "blobs")
-	mediaBlobStore := blobstore.New(blobsDir)
-	blobsFound := 0
-
-	for _, state := range snap.Files {
-		if state.IsDir || state.ContentHash == "" || state.ContentHash == "DIR" {
-			continue
-		}
-		if localBlobs.Has(state.ContentHash) {
-			blobsFound++
-			continue
-		}
-		srcPath := mediaBlobStore.Path(state.ContentHash)
-		if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-			continue
-		}
-
-		src, err := os.Open(srcPath)
-		if err != nil {
-			return nil, fmt.Errorf("open media blob %q: %w", state.ContentHash, err)
-		}
-		err = localBlobs.StoreReader(state.ContentHash, src)
-		src.Close()
-		if err != nil {
-			return nil, fmt.Errorf("import blob %q: %w", state.ContentHash, err)
-		}
-		blobsFound++
+	blobsFound, err := importBlobs(snap, localBlobs, blobstore.New(blobsDir))
+	if err != nil {
+		return nil, err
 	}
 
 	return &ImportResult{

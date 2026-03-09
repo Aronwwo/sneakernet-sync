@@ -218,7 +218,7 @@ func TestReconcile_MixedChanges(t *testing.T) {
 		"unchanged.txt": "hash-u",
 		"modified.txt":  "hash-new",
 		// deleted.txt is gone
-		"conflict.txt": "hash-c-local",
+		"conflict.txt":  "hash-c-local",
 		"new-local.txt": "hash-nl",
 	})
 	remote := makeSnap(map[string]string{
