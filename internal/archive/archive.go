@@ -11,9 +11,12 @@ import (
 	"github.com/Aronwwo/sneakernet-sync/internal/store/sqlite"
 )
 
+// DirHash is the sentinel content hash used for directory entries.
+const DirHash = "DIR"
+
 // Snapshot represents the state of the file tree at a point in time.
 // Files maps rel_path -> content_hash. An empty hash means the file was deleted
-// (tombstone). Directories are tracked with hash = "DIR".
+// (tombstone). Directories are tracked with hash = DirHash.
 type Snapshot struct {
 	ID       string
 	DeviceID string

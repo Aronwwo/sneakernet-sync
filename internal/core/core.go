@@ -55,13 +55,13 @@ type ScanResult struct {
 
 // StatusResult holds the sync status.
 type StatusResult struct {
-	DeviceID       string
-	DeviceName     string
-	RootDir        string
-	LastSnapshot   string
-	TrackedFiles   int
-	HasConflicts   bool
-	ConflictCount  int
+	DeviceID      string
+	DeviceName    string
+	RootDir       string
+	LastSnapshot  string
+	TrackedFiles  int
+	HasConflicts  bool
+	ConflictCount int
 }
 
 // PushResult holds the result of a push operation.
@@ -199,7 +199,7 @@ func (e *Engine) Scan() (*ScanResult, error) {
 
 	// Store blobs for all files.
 	for _, c := range changes {
-		if c.IsDir || c.ContentHash == "DIR" {
+		if c.IsDir || c.ContentHash == archive.DirHash {
 			continue
 		}
 		absPath := filepath.Join(e.RootDir, filepath.FromSlash(c.RelPath))
@@ -275,7 +275,7 @@ func (e *Engine) Push(mediaRoot string, dryRun bool) (*PushResult, error) {
 
 	blobCount := 0
 	for _, s := range snap.Files {
-		if !s.IsDir && s.ContentHash != "DIR" {
+		if !s.IsDir && s.ContentHash != archive.DirHash {
 			blobCount++
 		}
 	}
@@ -399,7 +399,7 @@ func (e *Engine) Doctor() ([]string, error) {
 		// Verify blob integrity.
 		missingBlobs := 0
 		for _, state := range snap.Files {
-			if state.IsDir || state.ContentHash == "DIR" {
+			if state.IsDir || state.ContentHash == archive.DirHash {
 				continue
 			}
 			if !e.Blobs.Has(state.ContentHash) {
