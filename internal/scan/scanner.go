@@ -31,6 +31,7 @@ type FileChange struct {
 	Size        int64
 	ModTime     time.Time
 	State       ChangeState
+	IsDir       bool
 }
 
 // Scanner walks a root directory and reports file changes.
@@ -44,10 +45,10 @@ func New(rootDir string) *Scanner {
 }
 
 // Scan walks the root directory and returns a FileChange entry for every
-// non-hidden file found. Hidden files and directories (names starting with
-// ".") are skipped. All returned entries have State set to StateNew; callers
-// are responsible for comparing against stored state to determine the actual
-// change state.
+// non-hidden file and directory found. Hidden files and directories (names
+// starting with ".") are skipped. All returned entries have State set to
+// StateNew; callers are responsible for comparing against stored state to
+// determine the actual change state.
 func (s *Scanner) Scan() ([]FileChange, error) {
 	var changes []FileChange
 
@@ -66,16 +67,30 @@ func (s *Scanner) Scan() ([]FileChange, error) {
 			return nil
 		}
 
-		if d.IsDir() {
-			return nil
-		}
-
-		info, err := d.Info()
+		relPath, err := filepath.Rel(s.rootDir, path)
 		if err != nil {
 			return err
 		}
 
-		relPath, err := filepath.Rel(s.rootDir, path)
+		// Skip the root directory itself.
+		if relPath == "." {
+			return nil
+		}
+
+		// Normalize path separators.
+		relPath = filepath.ToSlash(relPath)
+
+		if d.IsDir() {
+			changes = append(changes, FileChange{
+				RelPath:     relPath,
+				ContentHash: "DIR",
+				State:       StateNew,
+				IsDir:       true,
+			})
+			return nil
+		}
+
+		info, err := d.Info()
 		if err != nil {
 			return err
 		}
